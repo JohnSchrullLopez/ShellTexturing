@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: ddd5f77fe41fc6a47b1543b13216041f
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - mShellCompute: {fileID: 7200000, guid: 2ad9e9f3ae10da44d9accc9951ecbc8c, type: 3}
+  - mShellRenderMaterial: {fileID: -876546973899608171, guid: 28b94850227786249a1b354e12184726, type: 3}
+  - mBaseColor: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

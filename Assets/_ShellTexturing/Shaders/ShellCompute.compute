@@ -1,0 +1,107 @@
+#pragma kernel ShellTextureGeometry
+
+struct InputVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+};
+
+struct InputTriangle
+{
+    InputVertex inputVert0;
+    InputVertex inputVert1;
+    InputVertex inputVert2;
+};
+
+struct DrawVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    float4 vertexAttributes;
+};
+
+struct DrawTriangle
+{
+    DrawVertex drawVertices[3];
+};
+
+struct IndirectArguments
+{
+    uint numVerticesPerInstance;
+    uint numInstance;
+    uint startVertexIndex;
+    uint startInstanceIndex;
+};
+
+StructuredBuffer<InputTriangle> _InputTrianglesBuffer;
+AppendStructuredBuffer<DrawTriangle> _DrawTrianglesBuffer;
+RWStructuredBuffer<IndirectArguments> _IndirectArgumentsBuffer;
+
+int _TriangleCount;
+float4x4 _LocalToWorld;
+int _Layers;
+float _Height;
+//float _Time;
+float _WindForce;
+
+//Physics
+float3 _MovementDirection;
+float _DisplacementStrength;
+float _Curvature;
+
+DrawVertex GetVertex(float3 position, float3 normal, float2 uv, float4 attributes)
+{
+    DrawVertex output = (DrawVertex) 0;
+    output.position = mul(_LocalToWorld, float4(position, 1.0)).xyz;
+    output.normal = mul(_LocalToWorld, float4(normal, 0.0)).xyz;
+    output.uv = uv;
+    output.vertexAttributes = attributes;
+    return output;
+}
+
+[numthreads(64,1,1)]
+void ShellTextureGeometry(uint3 id : SV_DispatchThreadID)
+{
+    if ((int) id.x >= _TriangleCount)
+        return;
+    
+    InputTriangle inputTriangle = _InputTrianglesBuffer[id.x];
+    DrawTriangle tri = (DrawTriangle) 0;
+
+    for (int i = 0; i < _Layers; i++)
+    {
+        DrawVertex drawVertices[3];
+
+        float currentLayer = (float) (i + 1) / (float) _Layers;
+        
+        float k = pow(currentLayer, _Curvature);
+        //float windForce = cos(_Time) * cos(_Time * 1) * cos(_Time * 3) * cos(_Time * 5) * 0.5 + sin(_Time * 25) * 0.02;
+        float3 physicsOffset = _MovementDirection * k * _DisplacementStrength;
+        physicsOffset.x *= _MovementDirection * _WindForce + 1;
+
+        //Vertex Color Channels:
+        //red = relative height of current layer
+        //green = layer index
+        float3 position = inputTriangle.inputVert0.position + inputTriangle.inputVert0.normal * _Height * currentLayer;
+        position += physicsOffset;
+        drawVertices[0] = GetVertex(position, inputTriangle.inputVert0.normal, inputTriangle.inputVert0.uv, float4(currentLayer, i, 0.0, 1.0));
+        
+        position = inputTriangle.inputVert1.position + inputTriangle.inputVert1.normal * _Height * currentLayer;
+        position += physicsOffset;
+        drawVertices[1] = GetVertex(position, inputTriangle.inputVert1.normal, inputTriangle.inputVert1.uv, float4(currentLayer, i, 0.0, 1.0));
+        
+        position = inputTriangle.inputVert2.position + inputTriangle.inputVert2.normal * _Height * currentLayer;
+        position += physicsOffset;
+        drawVertices[2] = GetVertex(position, inputTriangle.inputVert2.normal, inputTriangle.inputVert2.uv, float4(currentLayer, i, 0.0, 1.0));
+        
+        tri.drawVertices[0] = drawVertices[0];
+        tri.drawVertices[1] = drawVertices[1];
+        tri.drawVertices[2] = drawVertices[2];
+        
+        _DrawTrianglesBuffer.Append(tri);
+    }
+    
+    InterlockedAdd(_IndirectArgumentsBuffer[0].numVerticesPerInstance, 3 * _Layers);
+}

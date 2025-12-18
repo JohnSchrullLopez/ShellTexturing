@@ -1,0 +1,166 @@
+#pragma kernel SkinnedShellTextureGeometry
+#pragma enable_d3d11_debug_symbols
+
+struct InputVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+};
+
+struct InputTriangle
+{
+    InputVertex inputVert0;
+    InputVertex inputVert1;
+    InputVertex inputVert2;
+};
+
+    struct DrawVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    float4 vertexAttributes;
+};
+
+struct DrawTriangle
+{
+    DrawVertex drawVertices[3];
+};
+
+struct IndirectArguments
+{
+    uint numVerticesPerInstance;
+    uint numInstance;
+    uint startVertexIndex;
+    uint startInstanceIndex;
+};
+
+//buffers
+StructuredBuffer<int> _IndicesBuffer;
+ByteAddressBuffer _SkinnedVertexBuffer;
+ByteAddressBuffer _UVBuffer;
+AppendStructuredBuffer<DrawTriangle> _DrawTrianglesBuffer;
+RWStructuredBuffer<IndirectArguments> _IndirectArgumentsBuffer;
+
+//Matrices
+float4x4 _LocalToWorld;
+
+//vertex array layout info
+int _NormalOffset;
+int _Stride;
+int _UVStride;
+int _UVOffset;
+
+//adjustable parameters
+int _TriangleCount;
+int _Layers;
+float _Height;
+float _Bias;
+
+//Physics
+float3 _MovementDirection;
+float _DisplacementStrength;
+float _Curvature;
+
+DrawVertex GetVertex(float3 position, float3 normal, float2 uv, float4 attributes)
+{
+    DrawVertex output = (DrawVertex) 0;
+    output.position = mul(_LocalToWorld, float4(position, 1.0)).xyz;
+    output.normal = mul(_LocalToWorld, float4(normal, 0.0)).xyz;
+    output.uv = uv;
+    output.vertexAttributes = attributes;
+    return output;
+}
+
+InputTriangle GetCurrentTriangle(int index)
+{
+    //1st vertex
+    int vertIndex = _IndicesBuffer[index];
+    int triIndex = vertIndex * _Stride;
+    int normalIndex = vertIndex * _Stride + _NormalOffset;
+    int uvIndex = vertIndex * _UVStride + _UVOffset;
+    
+    InputVertex vert1;
+    vert1.position = asfloat(_SkinnedVertexBuffer.Load3(triIndex));
+    vert1.normal = asfloat(_SkinnedVertexBuffer.Load3(normalIndex));
+    vert1.uv = asfloat(_UVBuffer.Load2(uvIndex));
+
+    //2nd vertex
+    vertIndex = _IndicesBuffer[index + 1];
+    triIndex = vertIndex * _Stride;
+    normalIndex = vertIndex * _Stride + _NormalOffset;
+    uvIndex = vertIndex * _UVStride + _UVOffset;
+    
+    InputVertex vert2;
+    vert2.position = asfloat(_SkinnedVertexBuffer.Load3(triIndex));
+    vert2.normal = asfloat(_SkinnedVertexBuffer.Load3(normalIndex));
+    vert2.uv = asfloat(_UVBuffer.Load2(uvIndex));
+
+    //3rd vertex
+    vertIndex = _IndicesBuffer[index + 2];
+    triIndex = vertIndex * _Stride;
+    normalIndex = vertIndex * _Stride + _NormalOffset;
+    uvIndex = vertIndex * _UVStride + _UVOffset;
+    
+    InputVertex vert3;
+    vert3.position = asfloat(_SkinnedVertexBuffer.Load3(triIndex));
+    vert3.normal = asfloat(_SkinnedVertexBuffer.Load3(normalIndex));
+    vert3.uv = asfloat(_UVBuffer.Load2(uvIndex));
+    
+    InputTriangle outputTri;
+    outputTri.inputVert0 = vert1;
+    outputTri.inputVert1 = vert2;
+    outputTri.inputVert2 = vert3;
+    
+    return outputTri;
+}
+
+[numthreads(128, 1, 1)]
+void SkinnedShellTextureGeometry(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _TriangleCount)
+        return;
+
+    int indicesIndex = id.x * 3;
+    InputTriangle inputTriangle = GetCurrentTriangle(indicesIndex);
+    
+    DrawTriangle tri = (DrawTriangle) 0;
+
+    //create new layers for current triangle
+    for (int i = 0; i < _Layers; i++)
+    {
+        DrawVertex drawVertices[3];
+
+        float currentLayer = (float) (i + 1) / (float) _Layers;
+        
+        float k = pow(currentLayer, _Curvature);
+        float3 physicsOffset = _MovementDirection * k * _DisplacementStrength;
+
+        //Vertex Color Channels:
+        //red = relative height of current layer
+        //green = layer index
+        float3 position = inputTriangle.inputVert0.position + inputTriangle.inputVert0.normal * _Height * currentLayer;
+        position += physicsOffset;
+        position += inputTriangle.inputVert0.normal * _Bias;
+        drawVertices[0] = GetVertex(position, inputTriangle.inputVert0.normal, inputTriangle.inputVert0.uv, float4(currentLayer, i, 0.0, 1.0));
+        
+        position = inputTriangle.inputVert1.position + inputTriangle.inputVert1.normal * _Height * currentLayer;
+        position += physicsOffset;
+        position += inputTriangle.inputVert1.normal * _Bias;
+        drawVertices[1] = GetVertex(position, inputTriangle.inputVert1.normal, inputTriangle.inputVert1.uv, float4(currentLayer, i, 0.0, 1.0));
+        
+        position = inputTriangle.inputVert2.position + inputTriangle.inputVert2.normal * _Height * currentLayer;
+        position += physicsOffset;
+        position += inputTriangle.inputVert2.normal * _Bias;
+        drawVertices[2] = GetVertex(position, inputTriangle.inputVert2.normal, inputTriangle.inputVert2.uv, float4(currentLayer, i, 0.0, 1.0));
+        
+        tri.drawVertices[0] = drawVertices[0];
+        tri.drawVertices[1] = drawVertices[1];
+        tri.drawVertices[2] = drawVertices[2];
+        
+        _DrawTrianglesBuffer.Append(tri);
+    }
+    
+    InterlockedAdd(_IndirectArgumentsBuffer[0].numVerticesPerInstance, 3 * _Layers);
+}
